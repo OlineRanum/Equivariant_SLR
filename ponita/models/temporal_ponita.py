@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from ponita.models.ponita import PonitaFiberBundle
-from ponita.nn.attn import TAttnUnit
-
+import torch.nn.functional as F
+import math
 
 class TemporalPonita(PonitaFiberBundle):
     def __init__(self,
@@ -69,20 +69,21 @@ class TemporalPonita(PonitaFiberBundle):
             
             # Perform temporal convolution
             # x [n_frames_per_vid x n_nodes x batch_size, num_ori, hidden_dim]    
-            x = self.conv1d(x, graph)
+            if readout_layer is None:
+                x = self.conv1d(x, graph, False)
             
             # x [n_frames_per_vid x n_nodes x batch_size, num_ori, hidden_dim]
             if readout_layer is not None: 
-
+                x = self.conv1d(x, graph, True)
                 # x [n_frames_per_vid x n_nodes x batch_size, num_ori, hidden_dim]
                 # Pool across spatial temporal graph
-                #x_ = self.TS_Pooling(x, graph)
+                x = self.TS_Pooling(x, graph)
 
                 # x [batch_size, num_ori, hidden_dim]
-                x_ = readout_layer(x)
+                x = readout_layer(x)
                 
                 # x [n_frames_per_vid x n_nodes x batch_size, num_ori, n_classes]
-                readouts.append(x_)
+                readouts.append(x)
         
         readout = sum(readouts) / len(readouts)
 
@@ -105,26 +106,31 @@ class TemporalPonita(PonitaFiberBundle):
         start_idx = 0
         for n_frames in graph.n_frames:
             # Select range corresponding to graph (n_frames x n_nodes)
+            _, num_ori, hidden_dim = x.shape
             n_idx = n_frames*self.num_land_marks
             x_tmp = x[start_idx:start_idx+n_idx,]
-
-            # Rearrange tensor
-            num_nodes_batch, num_ori, num_channels = x_tmp.shape
-
-            # [N_frames, num_landmarks, num_ori, num_channels]
-            x_tmp = x_tmp.view(-1, self.num_land_marks, num_ori, num_channels)
-
+            '''
+            method 1 just do it
+            '''
             # Aggregate spatial dimension 
-            x_tmp = x_tmp.mean(dim=1)
-
-            # Aggregate temporal dimension 
             x_tmp = x_tmp.mean(dim=0)
+            '''
+            method 2 split it TS
+            '''
+            #x_tmp = x_tmp.view(-1,self.num_land_marks, num_ori, hidden_dim)
+            #x_tmp = x_tmp.mean(dim=0)
+            #x_tmp = x_tmp.mean(dim=0) 
+            
             x_agg.append(x_tmp)
+            start_idx += n_frames*self.num_land_marks
+        
+        x_agg = torch.stack(x_agg, dim=0)  
+        
         return x_agg
     
     
     
-    def conv1d(self, x, graph):
+    def conv1d(self, x, graph, use_attn = False):
         """ Perform 1D convolution on the time axis 
         """
 
@@ -150,7 +156,7 @@ class TemporalPonita(PonitaFiberBundle):
             x_tmp = x_tmp.permute(1, 2, 0)
 
             # Convolution is performed on the last axis of the input data 
-            x_tmp = self.tconv.forward(x_tmp)
+            x_tmp = self.tconv.forward(x_tmp, use_attn)
 
             # Reshape back to original input shape
             x_tmp = x_tmp.permute(2, 0, 1)
@@ -193,21 +199,96 @@ class TCNUnit(nn.Module):
         #self.dropout = nn.Dropout(dropout_rate)
         #self.bn = nn.BatchNorm1d(out_channels)
         #bn_init(self.bn, 1)
-        #self.attention = TAttnUnit(out_channels)
+        self.attention = TAttnUnit(out_channels)
         self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(0.5)
     
     def conv_init(self, conv):
         nn.init.kaiming_normal_(conv.weight, mode="fan_out")
         nn.init.constant_(conv.bias, 0)
 
     
-    def forward(self, x):
-        
-        #x = self.attention.forward(x)
+    def forward(self, x, use_attn = False):
+        #if use_attn:
+        #    x = self.attention.forward(x)
         y = self.conv(x)
+        #y = self.dropout(y)
         
         # Use an activation function 
         y = self.relu(y)
 
         # Residual connection 
         return y + x
+
+
+class TAttnUnit(nn.Module):
+    def __init__(
+        self,
+        hid_dim
+    ):
+        super(TAttnUnit, self).__init__()
+        self.hidden_dim = 32
+        # Define linear transformations 
+        # for Q, K, and V
+        self.q_transform = nn.Linear( self.hidden_dim,  self.hidden_dim, bias=False)
+        self.k_transform = nn.Linear( self.hidden_dim,  self.hidden_dim, bias=False)
+        self.v_transform = nn.Linear( self.hidden_dim,  self.hidden_dim, bias=False)
+
+        
+        # Temporal encoding
+        self.max_time_steps = 128
+
+        # Not sure about this?
+        #self.temporal_encoding = nn.Parameter(torch.randn(1, self.max_time_steps, hid_dim))
+    
+    def conv_init(self, conv):
+        nn.init.kaiming_normal_(conv.weight, mode="fan_out")
+        nn.init.constant_(conv.bias, 0)
+
+                
+    def invariant(self, x):
+        return x
+    
+    def inv_emb_to_q(self, inv):
+        q = inv
+        return self.q_transform(q)
+    
+    def inv_emb_to_k(self, inv):
+        k = inv
+        return self.k_transform(k)
+    
+    def x_to_v(self, x):
+        # Interpreting x as values (appearances, high freq info)
+        return self.v_transform(x)
+
+    def forward(self, x):
+        # x in : [num_landmarks x num_orientations, num_channels, num_frames]
+
+        # x: [num_landmarks x num_orientations, num_frames, num_channels]
+        x = x.permute(0, 2, 1) 
+        
+        # q, v, k: [num_landmarks x num_orientations, num_frames, num_channels]
+        q = self.q_transform(x)
+        k = self.k_transform(x)
+        v = self.v_transform(x)
+        
+        
+        d_k = q.size(1)
+
+        # scores: [num_landmarks x num_orientations, num_frames x num_frames]
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)  
+        attn_probs = F.softmax(scores, dim=-1)
+       
+       # y: [num_landmarks x num_orientations, num_frames, hid_dim]
+        y = torch.matmul(attn_probs, v)  
+        
+        # y: [num_landmarks x num_orientations, num_channels, num_frames]
+        y = y.permute(0, 2, 1)  
+       
+        return y
+    
+    def time_encoding(self, x):
+        time_steps = x.size(1)
+        temporal_encoding = self.temporal_encoding[:,:time_steps,:]
+        x = x + temporal_encoding
+        return x 
