@@ -53,7 +53,7 @@ class PonitaFiberBundle(nn.Module):
         # Here we build the manifold, which are only dependent on the number of orientations we wish to consider
         # When we use this function, we lift our representations to the manifold 
         
-        #self.transform = Compose([PositionOrientationGraph(num_ori, radius=1000), SEnInvariantAttributes(separable=True)])
+        #self.transform = Compose([PositionOrientationGraph(num_ori, radius=50), SEnInvariantAttributes(separable=True)])
         self.transform = Compose([PositionOrientationGraph(num_ori), SEnInvariantAttributes(separable=True)])
 
 
@@ -117,8 +117,8 @@ class PonitaFiberBundle(nn.Module):
     def scalar_readout_fn(self, readout_scalar, batch):
         if self.output_dim > 0:
             output_scalar = sphere_to_scalar(readout_scalar)
-            if self.global_pooling:
-                output_scalar=global_add_pool(output_scalar, batch)
+            #if self.global_pooling:
+                #output_scalar=global_add_pool(output_scalar, batch)
         else:
             output_scalar = None
         return output_scalar

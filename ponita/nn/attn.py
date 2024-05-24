@@ -19,7 +19,7 @@ class TAttnUnit(nn.Module):
 
         
         # Temporal encoding
-        self.max_time_steps = 240
+        self.max_time_steps = 128
 
         # Not sure about this?
         #self.temporal_encoding = nn.Parameter(torch.randn(1, self.max_time_steps, hid_dim))
@@ -49,15 +49,15 @@ class TAttnUnit(nn.Module):
 
         # x: [num_landmarks x num_orientations, num_frames, num_channels]
         x = x.permute(0, 2, 1) 
-
-
         
         # q, v, k: [num_landmarks x num_orientations, num_frames, num_channels]
         q = self.q_transform(x)
         k = self.k_transform(x)
         v = self.v_transform(x)
         
+        
         d_k = q.size(1)
+
         # scores: [num_landmarks x num_orientations, num_frames x num_frames]
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)  
         attn_probs = F.softmax(scores, dim=-1)

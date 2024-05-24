@@ -13,8 +13,10 @@ class ISRDataReader:
         
         self.args = args
         self.N_NODES = args.n_nodes
+        self.set_scalenorm = args.scale_norm
+        self.downsample = args.downsample
         # Currently set at max of NGT200 dataset
-        self.max_frames = 240
+        self.max_frames = 300
         
         # Load metadata
         file_path = os.path.join(data_dir, args.root_metadata)
@@ -25,7 +27,7 @@ class ISRDataReader:
         data_dict = self._load_pose_data(pickle_path)
 
         # Define transformations
-        self.scalenorm = CenterAndScaleNormalize()
+
         
         # Build spatio-temporal graph 
         print('Building graphs...')
@@ -76,26 +78,28 @@ class ISRDataReader:
         # frames: [2 (x and y), n_frames, 75 nodes]
         frames = torch.tensor(np.asarray(kps, dtype=np.float32)).permute(2, 0, 1)
         
+        
         # Subsample nodes
         # frames: [2 (x and y), n_frames, 25 nodes]
         frames = self.pose_select(frames)
 
+        # Downsample number of frames
+        if self.downsample:
+            frames = self.downsample_frames(frames)
+
         # Normalize poses
         # TODO Finish testing Scale and Normalization
-        # self.scalenorm(data)
+
+        if self.set_scalenorm:
+            self.scalenorm = CenterAndScaleNormalize()
+            frames = self.scalenorm(frames)
+            
+
         
-        # TODO: Load the other transformations
-        
-        return data
+        return frames
     
-    def scaleandnormalize(self, frames):
-        """ Scale and normalize the data
-        """
-        reference_point_indexes = [3,4]
-        scale_factor=1,
-        frame_level=False
     
-    def downsample_frames(self, frames, downsample_rate = 5):
+    def downsample_frames(self, frames, downsample_rate = 3):
         return frames[:, ::downsample_rate, :]
 
     def pose_select(self, frames):
@@ -123,11 +127,13 @@ class ISRDataReader:
         graph_constructor = SpatioTemporalGraphBuilder(data_dict, self.args)
 
         graph_dict = {}
-
+        max_frames_count = 0
         for vid_id, data in data_dict.items():
 
             # number of frames per gloss
             n_frames = data['node_pos'].shape[1]
+            if n_frames > max_frames_count:
+                max_frames_count = n_frames
             end_idx = int(n_frames*self.N_NODES)
 
             if n_frames < self.max_frames:
@@ -161,6 +167,7 @@ class ISRDataReader:
                 'split': data['split']
             }
 
+        print('max frames', max_frames_count)
         return graph_dict
 
     def add_padding(self, x, pos_data):
