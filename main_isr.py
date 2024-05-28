@@ -19,11 +19,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # ------------------------ Input arguments
+
+
+    parser.add_argument('--checkpoint_path', type=str, default=None,
+                        help='Path to a checkpoint file to resume training')
+
     
     # Run parameters
-    parser.add_argument('--epochs', type=int, default=1500,
+    parser.add_argument('--epochs', type=int, default=100,
                         help='number of epochs')
-    parser.add_argument('--warmup', type=int, default=0,
+    parser.add_argument('--warmup', type=int, default=100,
                         help='number of epochs')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size. Does not scale with number of gpus.')
@@ -39,7 +44,7 @@ if __name__ == "__main__":
                         help='logging flag')
     parser.add_argument('--model_name', type=str, default='Ponita',
                         help='logging flag')
-    parser.add_argument('--wandb_log_folder', type=str, default='Gloss_100',
+    parser.add_argument('--wandb_log_folder', type=str, default='NGT200Main_1_2_3',
                         help='logging flag')
     parser.add_argument('--enable_progress_bar', type=eval, default=True,
                         help='enable progress bar')
@@ -47,6 +52,10 @@ if __name__ == "__main__":
                         help='Num workers in dataloader')
     parser.add_argument('--seed', type=int, default=0,
                         help='Random seed')
+
+    # Settings for saving the model
+    parser.add_argument('--save_folder', type=str, default='logs/T2',
+                        help='logging flag')
     
     # Train settings
     parser.add_argument('--train_augm', type=eval, default=False,
@@ -59,17 +68,17 @@ if __name__ == "__main__":
                         help='enable self interactions')
 
     # PONTA model settings
-    parser.add_argument('--num_ori', type=int, default=18,
+    parser.add_argument('--num_ori', type=int, default=10,
                         help='num elements of spherical grid')
-    parser.add_argument('--hidden_dim', type=int, default=32,
+    parser.add_argument('--hidden_dim', type=int, default=128,
                         help='internal feature dimension')
-    parser.add_argument('--basis_dim', type=int, default=32,
+    parser.add_argument('--basis_dim', type=int, default=256,
                         help='number of basis functions')
-    parser.add_argument('--degree', type=int, default=3,
+    parser.add_argument('--degree', type=int, default=1,
                         help='degree of the polynomial embedding')
-    parser.add_argument('--layers', type=int, default=3,
+    parser.add_argument('--layers', type=int, default=5,
                         help='Number of message passing layers')
-    parser.add_argument('--widening_factor', type=int, default=2,
+    parser.add_argument('--widening_factor', type=int, default=4,
                         help='Number of message passing layers')
     parser.add_argument('--layer_scale', type=float, default=0,
                         help='Initial layer scale factor in ConvNextBlock, 0 means do not use layer scale')
@@ -84,17 +93,21 @@ if __name__ == "__main__":
     # ISR Dataset settings
     parser.add_argument('--root', type=str, default="datasets/isr",
                         help='Data set location')
-    parser.add_argument('--root_metadata', type=str, default="NGT/metadata_train_1_3_test_3.json",
+    parser.add_argument('--root_metadata', type=str, default="NGT/metadata_ponita_1_1.json",
                         help='Metadata json file location')
     parser.add_argument('--root_poses', type=str, default="NGT/Poses",
                         help='Pose data dir location')
-    parser.add_argument('--n_classes', type=str, default=113,
+    parser.add_argument('--n_classes', type=str, default=198,
                         help='Number of sign classes')
     parser.add_argument('--temporal_configuration', type=str, default="spatio_temporal",
                         help='Temporal configuration of the graph. Options: spatio_temporal, per_frame') 
     parser.add_argument('--n_nodes', type=int, default=27,
-                        help='Number of nodes to use when reducing the graph - only 27 currently implemented') 
-    
+                        help='Number of nodes to use when reducing the graph - only 27 currently implemented')
+    parser.add_argument('--scale_norm', type=eval, default=True,
+                        help='If to apply scale and normalization') 
+    parser.add_argument('--downsample', type=eval, default=False,
+                        help='If to apply scale and normalization')
+        
     # Parallel computing stuff
     parser.add_argument('-g', '--gpus', default=1, type=int,
                         help='number of gpus to use (assumes all are on one node)')
@@ -129,9 +142,9 @@ if __name__ == "__main__":
     # ------------------------ Weights and Biases logger
     if args.log:
         if args.model_name != '':
-            logger = pl.loggers.WandbLogger(project=args.wandb_log_folder, name=args.model_name, config=args, save_dir='logs')
+            logger = pl.loggers.WandbLogger(project=args.wandb_log_folder, name=args.model_name, config=args, save_dir=args.save_folder)
         else:
-            logger = pl.loggers.WandbLogger(project=args.wandb_log_folder, name=None, config=args, save_dir='logs')
+            logger = pl.loggers.WandbLogger(project=args.wandb_log_folder, name=None, config=args, save_dir=args.save_folder)
     else:
         logger = None
 
@@ -147,9 +160,14 @@ if __name__ == "__main__":
     if args.log: callbacks.append(pl.callbacks.LearningRateMonitor(logging_interval='epoch'))
     
     # Initialize the trainer
-    trainer = pl.Trainer(logger=logger, max_epochs=args.epochs, callbacks=callbacks, inference_mode=False, # Important for force computation via backprop
-                         gradient_clip_val=0.5, accelerator=accelerator, devices=devices, enable_progress_bar=args.enable_progress_bar)
+    trainer = pl.Trainer(gpus = 1, logger=logger, max_epochs=args.epochs, callbacks=callbacks, inference_mode=False, 
+                        gradient_clip_val=0.5, accelerator=accelerator, devices=devices, enable_progress_bar=args.enable_progress_bar,
+                        resume_from_checkpoint=args.checkpoint_path)
     
+#    trainer = pl.Trainer(gpus = 1, logger=logger, max_epochs=args.epochs, callbacks=callbacks, inference_mode=False, # Important for force computation via backprop
+#                         gradient_clip_val=0.5, accelerator=accelerator, devices=devices, enable_progress_bar=args.enable_progress_bar,
+#                          resume_from_checkpoint=args.resume_from_checkpoint)
+
     # Do the training
     trainer.fit(model, pyg_loader.train_loader, pyg_loader.val_loader)
     

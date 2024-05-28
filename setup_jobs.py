@@ -13,7 +13,8 @@ def create_slurm_files(T_value, folder_value, num_files):
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=18
-#SBATCH --time=1:30:00
+#SBATCH --time=0:45:00
+#SBATCH --mem=48G
 #SBATCH --output=slurm/ponita_isr_%A.out
 
 module purge
@@ -23,7 +24,7 @@ module load Anaconda3/2022.05
 # Activate your environment
 source activate ponita
 # Check whether the GPU is available
-srun python $HOME/PONITA_SLR/main_isr_200.py --model_name Ponita_{T}_f{i} --root_metadata NGT/kfold/{folder}/{T}/metadata_fold_{i}.json --save_folder logs/{T} --wandb_log_folder NGT200Main_{folder}
+srun python $HOME/PONITA_SLR/main_isr_2002.py --model_name Ponita_{T}_f{i}_v8 --root_metadata NGT/kfold/{folder}/{T}/metadata_fold_{i}.json --save_folder logs/v8/{T} --wandb_log_folder NGT200Main_{folder}_ablations
 """
 
     # Create each job file
