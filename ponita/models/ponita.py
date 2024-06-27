@@ -117,8 +117,8 @@ class PonitaFiberBundle(nn.Module):
     def scalar_readout_fn(self, readout_scalar, batch):
         if self.output_dim > 0:
             output_scalar = sphere_to_scalar(readout_scalar)
-            #if self.global_pooling:
-                #output_scalar=global_add_pool(output_scalar, batch)
+            if self.global_pooling:
+                output_scalar=global_add_pool(output_scalar, batch)
         else:
             output_scalar = None
         return output_scalar

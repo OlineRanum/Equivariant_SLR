@@ -45,7 +45,7 @@ class ISRDataReader:
         self.gloss_dict = {}
         for item in metadata:  
             self.gloss_dict.setdefault(item['gloss'], []).extend(
-                [(instance['video_id'], instance['split']) for instance in item['instances']])
+                [(instance['video_id'], instance['split'], instance['camera_view']) for instance in item['instances']])
 
 
     def _load_pose_data(self, pickle_path):
@@ -58,10 +58,11 @@ class ISRDataReader:
                 'label': labels[gloss],
                 'gloss': gloss,
                 'node_pos': self._transform_data(pickle.load(open(os.path.join(pickle_path, f'{vid_id}.pkl'), 'rb'))["keypoints"][:, :, :2]),
-                'split': split
+                'split': split,
+                'view': view,
             }
             for gloss, metadata in self.gloss_dict.items()
-            for vid_id, split in metadata
+            for vid_id, split, view in metadata
             if os.path.exists(os.path.join(pickle_path, f'{vid_id}.pkl'))
         }
 
@@ -164,10 +165,10 @@ class ISRDataReader:
                 'n_frames': data['node_pos'].shape[1], 
                 'node_pos': pos,  
                 'edges': spatial_edges,   
-                'split': data['split']
+                'split': data['split'],
+                'view': data['view'],
             }
 
-        print('max frames', max_frames_count)
         return graph_dict
 
     def add_padding(self, x, pos_data):
@@ -279,12 +280,19 @@ class ISRDataLoader:
         train_data, val_data, test_data = self._split_dataset(self.data_dict)
         self.train_loader  = self._load_data(train_data)
         self.val_loader = self._load_data(val_data, shuffle = False, split = 'val')
-        self.test_loader = self._load_data(test_data, shuffle = False, split='test')
+        self.test_loader = [
+            self._load_data(test_data[0], shuffle = False, split='test'),
+            self._load_data(test_data[0], shuffle = False, split='test'),
+            self._load_data(test_data[0], shuffle = False, split='test'),
+        ]
 
     def _split_dataset(self, data_dict):
         train_data = {k: v for k, v in data_dict.items() if v['split'] == 'train'}
         val_data = {k: v for k, v in data_dict.items() if v['split'] == 'val'}
-        test_data = {k: v for k, v in data_dict.items() if v['split'] == 'test'}
+        test_data_v0 = {k: v for k, v in data_dict.items() if v['split'] == 'test' and v['view'] == 0}
+        test_data_v1 = {k: v for k, v in data_dict.items() if v['split'] == 'test' and v['view'] == 1}
+        test_data_v2 = {k: v for k, v in data_dict.items() if v['split'] == 'test' and v['view'] == 2}
+        test_data = [test_data_v0, test_data_v1, test_data_v2]
         return train_data, val_data, test_data
 
     def _load_data(self, data_dict, shuffle = True, split = 'train'): 
@@ -296,7 +304,7 @@ class ISRDataLoader:
             if self.args.temporal_configuration == 'spatio_temporal':
                 self.edge_index = data['edges']
             
-            data_list.append(Data(pos = pos, x = x, edge_index= self.edge_index, y=y, n_frames = data['n_frames']))
+            data_list.append(Data(pos = pos, x = x, edge_index= self.edge_index, y=y, n_frames = data['n_frames'], view = data['view']))
            
         
         print('Number of ' + split + ' points:', len(data_list))
@@ -332,7 +340,6 @@ if __name__ == "__main__":
 
     pyg_loader = ISRDataLoader(data, args)
     pyg_loader.build_loaders()
-
 
 
 

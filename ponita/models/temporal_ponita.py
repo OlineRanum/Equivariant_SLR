@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from ponita.models.ponita import PonitaFiberBundle
-import torch.nn.functional as F
-import math
+
+
 
 class TemporalPonita(PonitaFiberBundle):
     def __init__(self,
@@ -69,21 +69,20 @@ class TemporalPonita(PonitaFiberBundle):
             
             # Perform temporal convolution
             # x [n_frames_per_vid x n_nodes x batch_size, num_ori, hidden_dim]    
-            if readout_layer is None:
-                x = self.conv1d(x, graph, False)
+            x = self.conv1d(x, graph)
             
             # x [n_frames_per_vid x n_nodes x batch_size, num_ori, hidden_dim]
             if readout_layer is not None: 
-                x = self.conv1d(x, graph, True)
+
                 # x [n_frames_per_vid x n_nodes x batch_size, num_ori, hidden_dim]
                 # Pool across spatial temporal graph
-                x = self.TS_Pooling(x, graph)
+                #x_ = self.TS_Pooling(x, graph)
 
                 # x [batch_size, num_ori, hidden_dim]
-                x = readout_layer(x)
+                x_ = readout_layer(x)
                 
                 # x [n_frames_per_vid x n_nodes x batch_size, num_ori, n_classes]
-                readouts.append(x)
+                readouts.append(x_)
         
         readout = sum(readouts) / len(readouts)
 
@@ -106,34 +105,26 @@ class TemporalPonita(PonitaFiberBundle):
         start_idx = 0
         for n_frames in graph.n_frames:
             # Select range corresponding to graph (n_frames x n_nodes)
-            _, num_ori, hidden_dim = x.shape
             n_idx = n_frames*self.num_land_marks
-            # TODO: Check this? Should this be n_frames or n_frames+1 perhaps
             x_tmp = x[start_idx:start_idx+n_idx,]
 
-            '''
-            method 1 just do it
-            '''
-            # Aggregate spatial dimension 
-            x_tmp = x_tmp.mean(dim=0)
-            '''
-            method 2 split it TS
-            '''
-            #x_tmp = x_tmp.view(-1,self.num_land_marks, num_ori, hidden_dim)
-            #x_tmp = x_tmp.mean(dim=0)
-            #x_tmp = x_tmp.mean(dim=0) 
-            
-            x_agg.append(x_tmp)
+            # Rearrange tensor
+            num_nodes_batch, num_ori, num_channels = x_tmp.shape
 
-            start_idx += n_frames*self.num_land_marks
-        
-        
-        
-        return torch.stack(x_agg, dim=0)  
+            # [N_frames, num_landmarks, num_ori, num_channels]
+            x_tmp = x_tmp.view(-1, self.num_land_marks, num_ori, num_channels)
+
+            # Aggregate spatial dimension 
+            x_tmp = x_tmp.mean(dim=1)
+
+            # Aggregate temporal dimension 
+            x_tmp = x_tmp.mean(dim=0)
+            x_agg.append(x_tmp)
+        return x_agg
     
     
     
-    def conv1d(self, x, graph, use_attn = False):
+    def conv1d(self, x, graph):
         """ Perform 1D convolution on the time axis 
         """
 
@@ -159,7 +150,7 @@ class TemporalPonita(PonitaFiberBundle):
             x_tmp = x_tmp.permute(1, 2, 0)
 
             # Convolution is performed on the last axis of the input data 
-            x_tmp = self.tconv.forward(x_tmp, use_attn)
+            x_tmp = self.tconv.forward(x_tmp)
 
             # Reshape back to original input shape
             x_tmp = x_tmp.permute(2, 0, 1)
@@ -190,7 +181,9 @@ class TCNUnit(nn.Module):
         super(TCNUnit, self).__init__()
         pad = int((kernel_size - 1) / 2)
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=pad, groups=in_channels)
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=pad, groups=in_channels)
         self.conv_init(self.conv)
+        self.conv_init(self.conv1)
         self.in_channels = in_channels
         self.out_channels = out_channels
 
@@ -203,24 +196,25 @@ class TCNUnit(nn.Module):
         #self.bn = nn.BatchNorm1d(out_channels)
         #bn_init(self.bn, 1)
         #self.attention = TAttnUnit(out_channels)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.5)
+
+        # self.activation = nn.ReLU()
+        self.activation = nn.GELU()
     
     def conv_init(self, conv):
         nn.init.kaiming_normal_(conv.weight, mode="fan_out")
         nn.init.constant_(conv.bias, 0)
 
     
-    def forward(self, x, use_attn = False):
-        #if use_attn:
-        #    x = self.attention.forward(x)
+    def forward(self, x):
+        
+        #x = self.attention.forward(x)
         y = self.conv(x)
-        #y = self.dropout(y)
         
         # Use an activation function 
-        y = self.relu(y)
+        y = self.activation(y)
+
+        y = self.conv1(y)
+        y = self.activation(y)
 
         # Residual connection 
         return y + x
-
-
